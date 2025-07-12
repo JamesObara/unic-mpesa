@@ -4,6 +4,14 @@ const moment = require("moment");
 const cors = require("cors");
 const fs = require("fs");
 require('dotenv').config();
+const sdk = require("node-appwrite");
+
+const client = new sdk.Client();
+
+client
+    .setEndpoint(process.env.ENDPOINT)
+    .setProject(process.env.PROJECTID)
+    .setKey(process.env.APIKEY);
 
 const app = express();
 
@@ -98,10 +106,38 @@ app.get("/access_token", async (req, res) => {
   }
 });
 
+app.get("/test-appwrite", async (req, res) => {
+  try {
+    const databases = new sdk.Databases(client);
+
+    // Test connection by trying to list documents from your collection
+    const response = await databases.listDocuments(
+      process.env.APPWRITE_DATABASE_ID,
+      "businesses", // Fixed: Use string collection ID
+    );
+
+    res.json({
+      success: true,
+      message: "Appwrite connection successful",
+      count: response.total,
+      documents: response.documents
+    });
+  } catch (error) {
+    console.error("Appwrite test error:", error.message);
+    res.status(500).json({ 
+      success: false,
+      error: "Failed to connect to Appwrite or fetch data",
+      details: error.message 
+    });
+  }
+});
+const pendingTransactions = new Map()
 // STK Push endpoint
 app.post("/stkpush", validateStkPushRequest, attachAccessToken, async (req, res) => {
-  const { phone_number, payable_amount } = req.body;
+  const { phone_number, payable_amount,user_id  } = req.body;
   
+    console.log("Received user_id:", user_id);
+
   try {
     const timestamp = moment().format("YYYYMMDDHHmmss");
     const businessShortCode = process.env.BUSINESSSHORTCODE;
@@ -134,6 +170,16 @@ app.post("/stkpush", validateStkPushRequest, attachAccessToken, async (req, res)
       }
     });
 
+    if (response.data.CheckoutRequestID) {
+      pendingTransactions.set(response.data.CheckoutRequestID, {
+        user_id: user_id,
+        phone_number: phone_number,
+        amount: payable_amount
+      });
+      
+      console.log(`Stored user_id ${user_id} for CheckoutRequestID: ${response.data.CheckoutRequestID}`);
+    }
+
     res.json({
       success: true,
       message: "STK push sent successfully. Please check your phone.",
@@ -155,22 +201,43 @@ app.post("/stk_callback", (req, res) => {
     const callbackData = req.body.Body.stkCallback;
     
     console.log('STK Callback received:', callbackData);
+
+    const checkoutRequestID = callbackData.CheckoutRequestID;
     
-    // Save callback data to file for debugging
+    console.log('CheckoutRequestID:', checkoutRequestID);
+
+    const storedData = pendingTransactions.get(checkoutRequestID);
+    
+    console.log("Stored data:", storedData);
+    
+    if (storedData) {
+      const user_id = storedData.user_id;
+      
+      console.log('USER_ID IN CALLBACK:', user_id);
+      console.log('User phone number:', storedData.phone_number);
+      console.log('Transaction amount:', storedData.amount);
+
+    if (callbackData.ResultCode === 0) {
+        console.log(`Payment successful for user_id: ${user_id}`);
+        // Handle successful payment - you now have access to user_id
+        
+    } else {
+      console.log(`Payment failed for user_id: ${user_id}:`, callbackData.ResultDesc);
+      // Handle failed payment
+    }
+    
+    pendingTransactions.delete(checkoutRequestID);
+      
+    } else {
+      console.log('No stored data found for CheckoutRequestID:', checkoutRequestID);
+    }
+
     const timestamp = moment().format("YYYY-MM-DD-HH-mm-ss");
     const filename = `stk_callback_${timestamp}.json`;
     
     fs.writeFileSync(filename, JSON.stringify(callbackData, null, 2), "utf8");
     console.log(`Callback data saved to ${filename}`);
-    
-    // Process the callback based on ResultCode
-    if (callbackData.ResultCode === 0) {
-      console.log('Payment successful');
-      // Handle successful payment
-    } else {
-      console.log('Payment failed:', callbackData.ResultDesc);
-      // Handle failed payment
-    }
+
     
     res.sendStatus(200);
   } catch (error) {
@@ -220,6 +287,7 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
+
 
 // Start server
 app.listen(port, '0.0.0.0', () => {
