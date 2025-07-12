@@ -196,49 +196,55 @@ app.post("/stkpush", validateStkPushRequest, attachAccessToken, async (req, res)
 });
 
 // STK Push callback
-app.post("/stk_callback", (req, res) => {
+app.post("/stk_callback", async (req, res) => {
   try {
     const callbackData = req.body.Body.stkCallback;
-    
-    console.log('STK Callback received:', callbackData);
+    console.log('✅ STK Callback received:', callbackData);
 
     const checkoutRequestID = callbackData.CheckoutRequestID;
-    
-    console.log('CheckoutRequestID:', checkoutRequestID);
-
     const storedData = pendingTransactions.get(checkoutRequestID);
-    
-    console.log("Stored data:", storedData);
-    
+
+    const databases = new sdk.Databases(client);
+
+    const baseTransaction = {
+      checkoutRequestID: checkoutRequestID,
+      merchantRequestID: callbackData.MerchantRequestID,
+      resultCode: callbackData.ResultCode,
+      resultDesc: callbackData.ResultDesc,
+      mpesaReceiptNumber: null,
+      amount: 1,
+      transactionDate: null,
+      phoneNumber: null,
+      userId: "686c2e0f0027634a8e93",
+    };
+
+    // Extract metadata
+    if (callbackData.CallbackMetadata) {
+      callbackData.CallbackMetadata.Item.forEach(item => {
+        if (item.Name === "Amount") baseTransaction.amount = item.Value;
+        if (item.Name === "MpesaReceiptNumber") baseTransaction.mpesaReceiptNumber = item.Value;
+        if (item.Name === "TransactionDate") baseTransaction.transactionDate = item.Value;
+        if (item.Name === "PhoneNumber") baseTransaction.phoneNumber = item.Value;
+      });
+    }
+
+    // Save to Appwrite
+    const saved = await databases.createDocument(
+      process.env.APPWRITE_DATABASE_ID,
+      process.env.TRANSACTIONS_COLLECTION_ID,
+      "unique()",
+      baseTransaction
+    );
+
+    console.log("✅ Transaction saved to Appwrite:", saved.$id);
+
     if (storedData) {
-      const user_id = storedData.user_id;
-      
-      console.log('USER_ID IN CALLBACK:', user_id);
-      console.log('User phone number:', storedData.phone_number);
-      console.log('Transaction amount:', storedData.amount);
-
-    if (callbackData.ResultCode === 0) {
-        console.log(`Payment successful for user_id: ${user_id}`);
-        // Handle successful payment - you now have access to user_id
-        
+      console.log("Payment result for user_id:", storedData.user_id);
+      pendingTransactions.delete(checkoutRequestID);
     } else {
-      console.log(`Payment failed for user_id: ${user_id}:`, callbackData.ResultDesc);
-      // Handle failed payment
-    }
-    
-    pendingTransactions.delete(checkoutRequestID);
-      
-    } else {
-      console.log('No stored data found for CheckoutRequestID:', checkoutRequestID);
+      console.log("⚠️ No stored data found for this CheckoutRequestID");
     }
 
-    const timestamp = moment().format("YYYY-MM-DD-HH-mm-ss");
-    const filename = `stk_callback_${timestamp}.json`;
-    
-    fs.writeFileSync(filename, JSON.stringify(callbackData, null, 2), "utf8");
-    console.log(`Callback data saved to ${filename}`);
-
-    
     res.sendStatus(200);
   } catch (error) {
     console.error('Callback processing error:', error.message);
@@ -253,7 +259,7 @@ app.post("/registerurl", attachAccessToken, async (req, res) => {
     
     const response = await axios.post(url, {
       ShortCode: process.env.BUSINESSSHORTCODE,
-      ResponseType: "Complete",
+      ResponseType: "Completed",
       ConfirmationURL: process.env.CONFIRMATIONURL,
       ValidationURL: process.env.VALIDATIONURL
     }, {
