@@ -62,23 +62,23 @@ const attachAccessToken = async (req, res, next) => {
 
 // Validation middleware
 const validateStkPushRequest = (req, res, next) => {
-  const { phone_number, payable_amount } = req.body;
+  const { phoneNumber, amount } = req.body;
   
-  if (!phone_number || !payable_amount) {
+  if (!phoneNumber || !amount) {
     return res.status(400).json({ 
       error: 'Phone number and payable amount are required' 
     });
   }
 
   // Basic phone number validation (Kenyan format)
-  if (!/^254\d{9}$/.test(phone_number)) {
+  if (!/^254\d{9}$/.test(phoneNumber)) {
     return res.status(400).json({ 
       error: 'Invalid phone number format. Use 254XXXXXXXXX' 
     });
   }
 
   // Amount validation
-  if (isNaN(payable_amount) || payable_amount <= 0) {
+  if (isNaN(amount) || amount <= 0) {
     return res.status(400).json({ 
       error: 'Invalid amount. Must be a positive number' 
     });
@@ -134,9 +134,10 @@ app.get("/test-appwrite", async (req, res) => {
 const pendingTransactions = new Map()
 // STK Push endpoint
 app.post("/stkpush", validateStkPushRequest, attachAccessToken, async (req, res) => {
-  const { phone_number, payable_amount,user_id  } = req.body;
+  // console.log("req.body",req.body);
+  const { phoneNumber, amount,accountReference,transactionDesc  } = req.body;
   
-    console.log("Received user_id:", user_id);
+    // console.log("Received user_id:", user_id);
 
   try {
     const timestamp = moment().format("YYYYMMDDHHmmss");
@@ -154,13 +155,13 @@ app.post("/stkpush", validateStkPushRequest, attachAccessToken, async (req, res)
       Password: password,
       Timestamp: timestamp,
       TransactionType: "CustomerPayBillOnline",
-      Amount: payable_amount,
-      PartyA: phone_number,
+      Amount: amount,
+      PartyA: phoneNumber,
       PartyB: businessShortCode,
-      PhoneNumber: phone_number,
+      PhoneNumber: phoneNumber,
       CallBackURL: process.env.CALLBACKURI,
-      AccountReference: "Uniconnect PAY",
-      TransactionDesc: "Payment for uniconnect services"
+      AccountReference: accountReference,
+      TransactionDesc: transactionDesc
     };
 
     const response = await axios.post(stkPushUrl, requestData, {
@@ -171,13 +172,13 @@ app.post("/stkpush", validateStkPushRequest, attachAccessToken, async (req, res)
     });
 
     if (response.data.CheckoutRequestID) {
-      pendingTransactions.set(response.data.CheckoutRequestID, {
-        user_id: user_id,
-        phone_number: phone_number,
-        amount: payable_amount
-      });
+      // pendingTransactions.set(response.data.CheckoutRequestID, {
+      //   user_id: user_id,
+      //   phone_number: phone_number,
+      //   amount: amount
+      // });
       
-      console.log(`Stored user_id ${user_id} for CheckoutRequestID: ${response.data.CheckoutRequestID}`);
+      // console.log(`Stored user_id ${user_id} for CheckoutRequestID: ${response.data.CheckoutRequestID}`);
     }
 
     res.json({
@@ -229,21 +230,21 @@ app.post("/stk_callback", async (req, res) => {
     }
 
     // Save to Appwrite
-    const saved = await databases.createDocument(
-      process.env.APPWRITE_DATABASE_ID,
-      process.env.TRANSACTIONS_COLLECTION_ID,
-      "unique()",
-      baseTransaction
-    );
+    // const saved = await databases.createDocument(
+    //   process.env.APPWRITE_DATABASE_ID,
+    //   process.env.TRANSACTIONS_COLLECTION_ID,
+    //   "unique()",
+    //   baseTransaction
+    // );
 
-    console.log("✅ Transaction saved to Appwrite:", saved.$id);
+    // console.log("✅ Transaction saved to Appwrite:", saved.$id);
 
-    if (storedData) {
-      console.log("Payment result for user_id:", storedData.user_id);
-      pendingTransactions.delete(checkoutRequestID);
-    } else {
-      console.log("⚠️ No stored data found for this CheckoutRequestID");
-    }
+    // if (storedData) {
+    //   console.log("Payment result for user_id:", storedData.user_id);
+    //   pendingTransactions.delete(checkoutRequestID);
+    // } else {
+    //   console.log("⚠️ No stored data found for this CheckoutRequestID");
+    // }
 
     res.sendStatus(200);
   } catch (error) {
